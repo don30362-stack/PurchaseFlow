@@ -1,6 +1,0 @@
-@PurchaseFlow.Api_HostAddress = http://localhost:5188
-
-GET {{PurchaseFlow.Api_HostAddress}}/weatherforecast/
-Accept: application/json
-
-###
