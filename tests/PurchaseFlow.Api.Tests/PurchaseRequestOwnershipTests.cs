@@ -229,6 +229,56 @@ public class PurchaseRequestOwnershipTests
                 Assert.Empty(saved.Items);
             }
 
+            // Employee A 嘗試送審 Employee B 的草稿
+            var submitCsrf = await GetCsrfTokenAsync(client);
+
+            using var submitRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                $"/api/purchase-requests/{otherRequestId}/submit")
+            {
+                Content = JsonContent.Create(new
+                {
+                    rowVersion = otherVersion
+                })
+            };
+
+            submitRequest.Headers.Add(
+                "X-CSRF-TOKEN", submitCsrf);
+
+            using var submitResponse =
+                await client.SendAsync(submitRequest);
+
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                submitResponse.StatusCode);
+
+            // 確認 Employee B 的申請未受到影響
+            using (var scope = factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider
+                    .GetRequiredService<ApplicationDbContext>();
+
+                EnsureTestDatabase(db);
+
+                var saved = await db.PurchaseRequests
+                    .AsNoTracking()
+                    .Include(request => request.Items)
+                    .SingleAsync(request =>
+                        request.Id == otherRequestId);
+
+                Assert.Equal(
+                    "Employee B 的申請",
+                    saved.Title);
+
+                Assert.Equal("Draft", saved.Status);
+                Assert.Null(saved.SubmittedAtUtc);
+                Assert.Empty(saved.Items);
+
+                Assert.Equal(
+                    otherVersion,
+                    Convert.ToBase64String(saved.RowVersion));
+            }
+
         }
         finally
         {

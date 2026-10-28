@@ -359,6 +359,163 @@ public class PurchaseRequestsController : ControllerBase
         });
     }
 
+    [HttpPost("{id:int}/submit")]
+    public async Task<IActionResult> Submit(
+        int id,
+        [FromBody] SubmitPurchaseRequestRequest input,
+        CancellationToken cancellationToken)
+    {
+        var requesterId = _userManager.GetUserId(User);
+
+        if (string.IsNullOrWhiteSpace(requesterId))
+        {
+            return Unauthorized();
+        }
+
+        // 只查詢登入者自己的申請
+        var entity = await _db.PurchaseRequests
+            .Include(request => request.Items)
+            .SingleOrDefaultAsync(
+                request =>
+                    request.Id == id &&
+                    request.RequesterId == requesterId,
+                cancellationToken);
+
+        if (entity is null)
+        {
+            return NotFound();
+        }
+
+        // 只有 Draft 可以送審
+        if (entity.Status != "Draft")
+        {
+            return Conflict(new
+            {
+                message = "只有 Draft 狀態可以送出審核。"
+            });
+        }
+
+        // 驗證 RowVersion 格式
+        byte[] clientVersion;
+
+        try
+        {
+            clientVersion = Convert.FromBase64String(
+                input.RowVersion ?? "");
+        }
+        catch (FormatException)
+        {
+            clientVersion = [];
+        }
+
+        if (clientVersion.Length != 8)
+        {
+            ModelState.AddModelError(
+                "rowVersion",
+                "RowVersion 必須是有效的 8 位元組 Base64 字串。");
+        }
+
+        // 重新驗證草稿內容
+        if (string.IsNullOrWhiteSpace(entity.Title) ||
+            entity.Title.Trim().Length > 120)
+        {
+            ModelState.AddModelError(
+                "title", "申請標題不合法。");
+        }
+
+        if (entity.Purpose?.Length > 1000)
+        {
+            ModelState.AddModelError(
+                "purpose", "用途說明不可超過 1000 字。");
+        }
+
+        if (entity.Items.Count is < 1 or > 20)
+        {
+            ModelState.AddModelError(
+                "items", "送審必須有 1～20 個有效品項。");
+        }
+
+        var invalidItems = entity.Items.Any(item =>
+            string.IsNullOrWhiteSpace(item.Name) ||
+            item.Name.Trim().Length > 150 ||
+            item.Quantity is < 1 or > 999 ||
+            item.EstimatedUnitPrice <= 0 ||
+            item.EstimatedUnitPrice > MaxUnitPrice ||
+            decimal.Round(
+                item.EstimatedUnitPrice, 2) !=
+                item.EstimatedUnitPrice);
+
+        if (invalidItems)
+        {
+            ModelState.AddModelError(
+                "items", "品項資料不符合送審規則。");
+        }
+
+        if (!ModelState.IsValid)
+        {
+            return ValidationProblem(ModelState);
+        }
+
+        // 比對客戶端上次取得的版本
+        if (!clientVersion.SequenceEqual(entity.RowVersion))
+        {
+            return Conflict(new
+            {
+                message = "資料已被修改，請重新載入後再送審。"
+            });
+        }
+
+        // 讓 EF Core 使用客戶端版本檢查並行衝突
+        _db.Entry(entity)
+            .Property(request => request.RowVersion)
+            .OriginalValue = clientVersion;
+
+        // Draft -> Pending
+        var now = DateTimeOffset.UtcNow;
+
+        entity.Status = "Pending";
+        entity.SubmittedAtUtc = now;
+        entity.UpdatedAtUtc = now;
+
+        try
+        {
+            await _db.SaveChangesAsync(cancellationToken);
+        }
+        catch (DbUpdateConcurrencyException)
+        {
+            return Conflict(new
+            {
+                message = "送審發生並行衝突，請重新載入後再試。"
+            });
+        }
+
+        // 成功後回傳更新後的申請明細
+        return Ok(new
+        {
+            id = entity.Id,
+            title = entity.Title,
+            purpose = entity.Purpose,
+            status = entity.Status,
+            totalAmount = entity.Items.Sum(
+                item => item.Quantity * item.EstimatedUnitPrice),
+            createdAtUtc = entity.CreatedAtUtc,
+            updatedAtUtc = entity.UpdatedAtUtc,
+            submittedAtUtc = entity.SubmittedAtUtc,
+            rowVersion = Convert.ToBase64String(entity.RowVersion),
+            items = entity.Items
+                .OrderBy(item => item.Id)
+                .Select(item => new
+                {
+                    id = item.Id,
+                    name = item.Name,
+                    quantity = item.Quantity,
+                    estimatedUnitPrice = item.EstimatedUnitPrice,
+                    lineTotal =
+                        item.Quantity * item.EstimatedUnitPrice
+                }),
+            approvalLog = (object?)null
+        });
+    }
 
     [HttpPost]
     public async Task<IActionResult> Create(

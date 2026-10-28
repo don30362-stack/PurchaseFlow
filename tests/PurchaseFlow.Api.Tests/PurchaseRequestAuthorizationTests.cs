@@ -130,6 +130,26 @@ public class PurchaseRequestAuthorizationTests
                 HttpStatusCode.Forbidden,
                 putResponse.StatusCode);
 
+            // Manager 不可送出採購申請
+            using var submitRequest = new HttpRequestMessage(
+                HttpMethod.Post,
+                "/api/purchase-requests/999999/submit")
+            {
+                Content = JsonContent.Create(new
+                {
+                    rowVersion = Convert.ToBase64String(new byte[8])
+                })
+            };
+
+            submitRequest.Headers.Add(
+                "X-CSRF-TOKEN", createCsrf);
+
+            using var submitResponse =
+                await client.SendAsync(submitRequest);
+
+            Assert.Equal(
+                HttpStatusCode.Forbidden,
+                submitResponse.StatusCode);
 
             // 驗證沒有新增採購申請
             using (var scope = factory.Services.CreateScope())
