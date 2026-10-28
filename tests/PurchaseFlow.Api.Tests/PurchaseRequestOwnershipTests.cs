@@ -32,6 +32,7 @@ public class PurchaseRequestOwnershipTests
         var createdUserIds = new List<string>();
         var ownerRequestId = 0;
         var otherRequestId = 0;
+        string otherVersion;
 
         try
         {
@@ -111,6 +112,8 @@ public class PurchaseRequestOwnershipTests
 
                 ownerRequestId = ownerRequest.Id;
                 otherRequestId = otherRequest.Id;
+                otherVersion = Convert.ToBase64String(
+                    otherRequest.RowVersion);
             }
 
             // Employee A 登入
@@ -172,6 +175,60 @@ public class PurchaseRequestOwnershipTests
             Assert.Equal(
                 HttpStatusCode.NotFound,
                 otherResponse.StatusCode);
+
+            // Employee A 嘗試修改 Employee B 的草稿
+            var updateCsrf = await GetCsrfTokenAsync(client);
+
+            using var putRequest = new HttpRequestMessage(
+                HttpMethod.Put,
+                $"/api/purchase-requests/{otherRequestId}")
+            {
+                Content = JsonContent.Create(new
+                {
+                    title = "Employee A 嘗試修改 B 的草稿",
+                    purpose = "不應成功",
+                    rowVersion = otherVersion,
+                    items = Array.Empty<object>()
+                })
+            };
+
+            putRequest.Headers.Add(
+                "X-CSRF-TOKEN", updateCsrf);
+
+            using var putResponse =
+                await client.SendAsync(putRequest);
+
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                putResponse.StatusCode);
+
+            // 確認 B 的草稿完全沒有被修改
+            using (var scope = factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider
+                    .GetRequiredService<ApplicationDbContext>();
+
+                EnsureTestDatabase(db);
+
+                var saved = await db.PurchaseRequests
+                    .AsNoTracking()
+                    .Include(request => request.Items)
+                    .SingleAsync(request =>
+                        request.Id == otherRequestId);
+
+                Assert.Equal(
+                    "Employee B 的申請",
+                    saved.Title);
+
+                Assert.Equal("Draft", saved.Status);
+
+                Assert.Equal(
+                    otherVersion,
+                    Convert.ToBase64String(saved.RowVersion));
+
+                Assert.Empty(saved.Items);
+            }
+
         }
         finally
         {

@@ -13,7 +13,7 @@ namespace PurchaseFlow.Api.Tests;
 public class PurchaseRequestAuthorizationTests
 {
     [Fact]
-    public async Task Manager_CannotCreateDraft_Returns403()
+    public async Task Manager_CannotCreateOrUpdateDraft_Returns403()
     {
         using var factory = new SqlServerTestApiFactory();
         using var client = factory.CreateClient(
@@ -106,6 +106,30 @@ public class PurchaseRequestAuthorizationTests
 
             // Manager 不應有建立草稿的權限
             Assert.Equal(HttpStatusCode.Forbidden, response.StatusCode);
+
+
+            // Manager 嘗試修改採購草稿
+            using var putRequest = new HttpRequestMessage(
+                HttpMethod.Put, "/api/purchase-requests/999999")
+            {
+                Content = JsonContent.Create(new
+                {
+                    title = "主管不應能修改草稿",
+                    rowVersion = Convert.ToBase64String(new byte[8]),
+                    items = Array.Empty<object>()
+                })
+            };
+
+            // 使用登入後的有效 CSRF Token
+            putRequest.Headers.Add("X-CSRF-TOKEN", createCsrf);
+
+            using var putResponse =
+                await client.SendAsync(putRequest);
+
+            Assert.Equal(
+                HttpStatusCode.Forbidden,
+                putResponse.StatusCode);
+
 
             // 驗證沒有新增採購申請
             using (var scope = factory.Services.CreateScope())
