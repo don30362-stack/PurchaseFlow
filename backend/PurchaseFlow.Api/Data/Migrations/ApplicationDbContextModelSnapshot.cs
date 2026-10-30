@@ -223,6 +223,46 @@ namespace PurchaseFlow.Api.Data.Migrations
                     b.ToTable("AspNetUsers", (string)null);
                 });
 
+            modelBuilder.Entity("PurchaseFlow.Api.Data.Entities.ApprovalLog", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("int");
+
+                    SqlServerPropertyBuilderExtensions.UseIdentityColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("Comment")
+                        .HasMaxLength(500)
+                        .HasColumnType("nvarchar(500)");
+
+                    b.Property<string>("Decision")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.Property<int>("PurchaseRequestId")
+                        .HasColumnType("int");
+
+                    b.Property<DateTimeOffset>("ReviewedAtUtc")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("ReviewerId")
+                        .IsRequired()
+                        .HasColumnType("nvarchar(450)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("PurchaseRequestId")
+                        .IsUnique();
+
+                    b.HasIndex("ReviewerId");
+
+                    b.ToTable("ApprovalLogs", null, t =>
+                        {
+                            t.HasCheckConstraint("CK_ApprovalLogs_Decision", "[Decision] IN (N'Approved', N'Rejected')");
+                        });
+                });
+
             modelBuilder.Entity("PurchaseFlow.Api.Data.Entities.PurchaseRequest", b =>
                 {
                     b.Property<int>("Id")
@@ -360,6 +400,25 @@ namespace PurchaseFlow.Api.Data.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("PurchaseFlow.Api.Data.Entities.ApprovalLog", b =>
+                {
+                    b.HasOne("PurchaseFlow.Api.Data.Entities.PurchaseRequest", "PurchaseRequest")
+                        .WithOne("ApprovalLog")
+                        .HasForeignKey("PurchaseFlow.Api.Data.Entities.ApprovalLog", "PurchaseRequestId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.HasOne("PurchaseFlow.Api.Data.ApplicationUser", "Reviewer")
+                        .WithMany()
+                        .HasForeignKey("ReviewerId")
+                        .OnDelete(DeleteBehavior.NoAction)
+                        .IsRequired();
+
+                    b.Navigation("PurchaseRequest");
+
+                    b.Navigation("Reviewer");
+                });
+
             modelBuilder.Entity("PurchaseFlow.Api.Data.Entities.PurchaseRequest", b =>
                 {
                     b.HasOne("PurchaseFlow.Api.Data.ApplicationUser", "Requester")
@@ -384,6 +443,8 @@ namespace PurchaseFlow.Api.Data.Migrations
 
             modelBuilder.Entity("PurchaseFlow.Api.Data.Entities.PurchaseRequest", b =>
                 {
+                    b.Navigation("ApprovalLog");
+
                     b.Navigation("Items");
                 });
 #pragma warning restore 612, 618

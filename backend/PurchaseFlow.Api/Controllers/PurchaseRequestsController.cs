@@ -11,7 +11,7 @@ namespace PurchaseFlow.Api.Controllers;
 
 [ApiController]
 [Route("api/purchase-requests")]
-[Authorize(Policy = AuthorizationPolicies.EmployeeOnly)]
+[Authorize]
 public class PurchaseRequestsController : ControllerBase
 {
     private readonly ApplicationDbContext _db;
@@ -27,31 +27,67 @@ public class PurchaseRequestsController : ControllerBase
         _userManager = userManager;
     }
 
-
     [HttpGet]
     public async Task<IActionResult> GetMine(
         [FromQuery] string? view,
         CancellationToken cancellationToken)
     {
-        if (view != "mine")
-        {
-            return BadRequest(new
-            {
-                message = "目前僅支援 view=mine。"
-            });
-        }
+        var userId = _userManager.GetUserId(User);
 
-        var requesterId = _userManager.GetUserId(User);
-
-        if (string.IsNullOrWhiteSpace(requesterId))
+        if (string.IsNullOrWhiteSpace(userId))
         {
             return Unauthorized();
         }
 
-        var requests = await _db.PurchaseRequests
-            .AsNoTracking()
-            .Include(request => request.Items)
-            .Where(request => request.RequesterId == requesterId)
+        // 只接受規格中定義的三種查詢
+        if (view is not ("mine" or "pending" or "reviewed"))
+        {
+            return BadRequest(new
+            {
+                message = "view 必須是 mine、pending 或 reviewed。"
+            });
+        }
+
+        // 確認目前角色有權使用指定的查詢
+        var isEmployee = User.IsInRole("Employee");
+        var isManager = User.IsInRole("Manager");
+
+        if (view == "mine" && !isEmployee)
+        {
+            return Forbid();
+        }
+
+        if (view is "pending" or "reviewed" && !isManager)
+        {
+            return Forbid();
+        }
+
+        IQueryable<PurchaseRequest> query =
+            _db.PurchaseRequests
+                .AsNoTracking()
+                .Include(request => request.Items);
+
+        // Employee：只查詢自己的申請
+        if (view == "mine")
+        {
+            query = query.Where(request =>
+                request.RequesterId == userId);
+        }
+        // Manager：只查詢待審核申請
+        else if (view == "pending")
+        {
+            query = query.Where(request =>
+                request.Status == "Pending");
+        }
+        // Manager：只查詢已核准或已拒絕的申請
+        else
+        {
+            query = query.Where(request =>
+                request.Status == "Approved" ||
+                request.Status == "Rejected");
+        }
+
+        var requests = await query
             .OrderByDescending(request => request.CreatedAtUtc)
             .ThenByDescending(request => request.Id)
             .ToListAsync(cancellationToken);
@@ -63,11 +99,13 @@ public class PurchaseRequestsController : ControllerBase
             purpose = request.Purpose,
             status = request.Status,
             totalAmount = request.Items.Sum(
-                item => item.Quantity * item.EstimatedUnitPrice),
+                item => item.Quantity *
+                        item.EstimatedUnitPrice),
             createdAtUtc = request.CreatedAtUtc,
             updatedAtUtc = request.UpdatedAtUtc,
             submittedAtUtc = request.SubmittedAtUtc,
-            rowVersion = Convert.ToBase64String(request.RowVersion)
+            rowVersion = Convert.ToBase64String(
+                request.RowVersion)
         });
 
         return Ok(response);
@@ -79,20 +117,42 @@ public class PurchaseRequestsController : ControllerBase
         int id,
         CancellationToken cancellationToken)
     {
-        var requesterId = _userManager.GetUserId(User);
+        var userId = _userManager.GetUserId(User);
 
-        if (string.IsNullOrWhiteSpace(requesterId))
+        if (string.IsNullOrWhiteSpace(userId))
         {
             return Unauthorized();
         }
 
-        var request = await _db.PurchaseRequests
-            .AsNoTracking()
-            .Include(request => request.Items)
-            .Where(request =>
-                request.Id == id &&
-                request.RequesterId == requesterId)
-            .SingleOrDefaultAsync(cancellationToken);
+        IQueryable<PurchaseRequest> query =
+            _db.PurchaseRequests
+                .AsNoTracking()
+                .Include(request => request.Items)
+                .Include(request => request.ApprovalLog);
+
+        if (User.IsInRole("Employee"))
+        {
+            // Employee 只能查看自己的申請
+            query = query.Where(request =>
+                request.RequesterId == userId);
+        }
+        else if (User.IsInRole("Manager"))
+        {
+            // Manager 不可查看尚未送審的 Draft
+            query = query.Where(request =>
+                request.Status == "Pending" ||
+                request.Status == "Approved" ||
+                request.Status == "Rejected");
+        }
+        else
+        {
+            return Forbid();
+        }
+
+        var request = await query
+            .SingleOrDefaultAsync(
+                request => request.Id == id,
+                cancellationToken);
 
         if (request is null)
         {
@@ -106,11 +166,14 @@ public class PurchaseRequestsController : ControllerBase
             purpose = request.Purpose,
             status = request.Status,
             totalAmount = request.Items.Sum(
-                item => item.Quantity * item.EstimatedUnitPrice),
+                item => item.Quantity *
+                        item.EstimatedUnitPrice),
             createdAtUtc = request.CreatedAtUtc,
             updatedAtUtc = request.UpdatedAtUtc,
             submittedAtUtc = request.SubmittedAtUtc,
-            rowVersion = Convert.ToBase64String(request.RowVersion),
+            rowVersion = Convert.ToBase64String(
+                request.RowVersion),
+
             items = request.Items
                 .OrderBy(item => item.Id)
                 .Select(item => new
@@ -120,13 +183,26 @@ public class PurchaseRequestsController : ControllerBase
                     quantity = item.Quantity,
                     estimatedUnitPrice = item.EstimatedUnitPrice,
                     lineTotal =
-                        item.Quantity * item.EstimatedUnitPrice
+                        item.Quantity *
+                        item.EstimatedUnitPrice
                 }),
-            approvalLog = (object?)null
+
+            approvalLog = request.ApprovalLog is null
+                ? (object?)null
+                : new
+                {
+                    id = request.ApprovalLog.Id,
+                    reviewerId = request.ApprovalLog.ReviewerId,
+                    decision = request.ApprovalLog.Decision,
+                    comment = request.ApprovalLog.Comment,
+                    reviewedAtUtc =
+                        request.ApprovalLog.ReviewedAtUtc
+                }
         });
     }
 
 
+    [Authorize(Policy = AuthorizationPolicies.EmployeeOnly)]
     [HttpPut("{id:int}")]
     public async Task<IActionResult> Update(
         int id,
@@ -359,6 +435,7 @@ public class PurchaseRequestsController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AuthorizationPolicies.EmployeeOnly)]
     [HttpPost("{id:int}/submit")]
     public async Task<IActionResult> Submit(
         int id,
@@ -517,6 +594,7 @@ public class PurchaseRequestsController : ControllerBase
         });
     }
 
+    [Authorize(Policy = AuthorizationPolicies.EmployeeOnly)]
     [HttpPost]
     public async Task<IActionResult> Create(
         [FromBody] CreatePurchaseRequestRequest request,

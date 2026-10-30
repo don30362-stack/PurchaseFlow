@@ -21,4 +21,6 @@ public class PurchaseRequest
     public byte[] RowVersion { get; set; } = [];
 
     public List<PurchaseRequestItem> Items { get; set; } = [];
+
+    public ApprovalLog? ApprovalLog { get; set; }
 }

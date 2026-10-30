@@ -20,6 +20,9 @@ public class ApplicationDbContext
     public DbSet<PurchaseRequestItem> PurchaseRequestItems =>
         Set<PurchaseRequestItem>();
 
+    public DbSet<ApprovalLog> ApprovalLogs =>
+        Set<ApprovalLog>();
+
     protected override void OnModelCreating(ModelBuilder builder)
     {
         base.OnModelCreating(builder);
@@ -91,5 +94,44 @@ public class ApplicationDbContext
             entity.Property(item => item.EstimatedUnitPrice)
                 .HasPrecision(18, 2);
         });
+
+        // 主管審核紀錄表
+        builder.Entity<ApprovalLog>(entity =>
+        {
+            entity.ToTable("ApprovalLogs", table =>
+            {
+                table.HasCheckConstraint(
+                    "CK_ApprovalLogs_Decision",
+                    "[Decision] IN (N'Approved', N'Rejected')");
+            });
+
+            entity.HasKey(log => log.Id);
+
+            entity.Property(log => log.Decision)
+                .HasMaxLength(20)
+                .IsRequired();
+
+            entity.Property(log => log.Comment)
+                .HasMaxLength(500);
+
+            // 每張申請最多只能有一筆最終審核紀錄
+            entity.HasIndex(log => log.PurchaseRequestId)
+                .IsUnique();
+
+            entity.HasOne(log => log.PurchaseRequest)
+                .WithOne(request => request.ApprovalLog)
+                .HasForeignKey<ApprovalLog>(
+                    log => log.PurchaseRequestId)
+                .OnDelete(DeleteBehavior.NoAction)
+                .IsRequired();
+
+            // 審核紀錄必須保留審核主管的身份
+            entity.HasOne(log => log.Reviewer)
+                .WithMany()
+                .HasForeignKey(log => log.ReviewerId)
+                .OnDelete(DeleteBehavior.NoAction)
+                .IsRequired();
+        });
+
     }
 }

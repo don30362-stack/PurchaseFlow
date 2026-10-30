@@ -279,6 +279,92 @@ public class PurchaseRequestOwnershipTests
                     Convert.ToBase64String(saved.RowVersion));
             }
 
+            // 將 Employee B 的 Draft 轉為 Pending
+            string pendingVersion;
+
+            using (var scope = factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider
+                    .GetRequiredService<ApplicationDbContext>();
+
+                EnsureTestDatabase(db);
+
+                var otherRequest = await db.PurchaseRequests
+                    .Include(request => request.Items)
+                    .SingleAsync(request =>
+                        request.Id == otherRequestId);
+
+                var now = DateTimeOffset.UtcNow;
+
+                otherRequest.Status = "Pending";
+                otherRequest.SubmittedAtUtc = now;
+                otherRequest.UpdatedAtUtc = now;
+
+                otherRequest.Items.Add(new PurchaseRequestItem
+                {
+                    Name = "Employee B 的鍵盤",
+                    Quantity = 2,
+                    EstimatedUnitPrice = 1000m
+                });
+
+                await db.SaveChangesAsync();
+
+                pendingVersion = Convert.ToBase64String(
+                    otherRequest.RowVersion);
+            }
+
+            Assert.NotEqual(otherVersion, pendingVersion);
+
+            // Employee A 嘗試查看 B 的 Pending 明細
+            using var otherPendingResponse = await client.GetAsync(
+                $"/api/purchase-requests/{otherRequestId}");
+
+            Assert.Equal(
+                HttpStatusCode.NotFound,
+                otherPendingResponse.StatusCode);
+
+            // Employee A 的 mine 清單仍不可出現 B 的申請
+            using var mineResponse = await client.GetAsync(
+                "/api/purchase-requests?view=mine");
+
+            Assert.Equal(
+                HttpStatusCode.OK,
+                mineResponse.StatusCode);
+
+            var mineJson = await mineResponse.Content
+                .ReadFromJsonAsync<JsonElement>();
+
+            Assert.DoesNotContain(
+                mineJson.EnumerateArray(),
+                request => request.GetProperty("id").GetInt32()
+                    == otherRequestId);
+
+            // 確認 B 的 Pending 申請沒有被修改
+            using (var scope = factory.Services.CreateScope())
+            {
+                var db = scope.ServiceProvider
+                    .GetRequiredService<ApplicationDbContext>();
+
+                EnsureTestDatabase(db);
+
+                var saved = await db.PurchaseRequests
+                    .AsNoTracking()
+                    .Include(request => request.Items)
+                    .SingleAsync(request =>
+                        request.Id == otherRequestId);
+
+                Assert.Equal("Pending", saved.Status);
+                Assert.NotNull(saved.SubmittedAtUtc);
+                Assert.Single(saved.Items);
+
+                Assert.Equal(
+                    "Employee B 的鍵盤",
+                    saved.Items.Single().Name);
+
+                Assert.Equal(
+                    pendingVersion,
+                    Convert.ToBase64String(saved.RowVersion));
+            }
         }
         finally
         {

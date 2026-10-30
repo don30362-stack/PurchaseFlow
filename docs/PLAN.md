@@ -1,6 +1,6 @@
 # PurchaseFlow — 開發計畫與決策紀錄
 
-> 狀態：**階段 0 完成，準備進入階段 1**｜2026-10-22。
+> 狀態：**階段 0～5 完成，準備進入階段 6 Vue 前端實作**｜2026-10-30。
 
 ## 1. 程式架構（精簡原則）
 
@@ -8,8 +8,9 @@
 PurchaseFlow/
 ├─ frontend/                 # Vue 3 + TypeScript + Vite
 ├─ backend/
-│  ├─ PurchaseFlow.Api/      # ASP.NET Core Web API、Identity、EF Core、Migrations
-│  └─ PurchaseFlow.Tests/    # xUnit 單元／整合測試
+│  └─ PurchaseFlow.Api/      # ASP.NET Core Web API、Identity、EF Core、Migrations
+├─ tests/
+│  └─ PurchaseFlow.Api.Tests/ # xUnit 單元／整合測試
 ├─ docs/
 │  ├─ MVP.md                 # 本文件確認後的目標、需求、權限、狀態、ERD、頁面
 │  ├─ API.md                 # API Request／Response、錯誤與驗證
@@ -35,6 +36,13 @@ PurchaseFlow/
 | 5. 主管審核 | 待審核清單、核准／拒絕、Audit Log、交易、競態處理 | 僅 Pending 可審；拒絕理由必填；同筆最多一筆 Log；同時審核僅一筆成功 |
 | 6. Vue 畫面與整合 | 四頁模板、角色導航、API 串接、錯誤狀態 | 員工與主管可在瀏覽器操作完整情境，且不可越權 |
 | 7. 完整驗收與展示 | xUnit 補齊測試、手動驗收、README、部署或 Demo 錄影 | 測試通過；乾淨環境可建置；作品有可驗證的展示入口與啟動說明 |
+
+**進度摘要：**
+
+- 階段 0～5：已完成。
+- 階段 5：主管清單、核准／拒絕、審核紀錄、RowVersion、並行審核與交易一致性。
+- 截至本階段，24 項 xUnit 測試通過。
+- 階段 6～7：尚未完成。
 
 **測試不要全部延到階段 7。** 每個後端功能階段都應同步加入關鍵測試；階段 7 是補齊與總驗收。
 
@@ -64,7 +72,15 @@ PurchaseFlow/
 
 階段 0 完成依據：D1～D6 已由使用者確認，核心角色、狀態、ERD、API 契約與最低測試均已整理。D7 不妨礙後端實作。
 
-## 4. 下一步：階段 1 環境與專案骨架
+## 4. 下一步：階段 6 Vue 前端實作
+
+1. 串接登入／登出與 Cookie／CSRF，依員工／主管角色提供導航。
+2. 實作申請清單與草稿編輯，串接品項、金額顯示及送審流程。
+3. 實作主管待審核清單、核准／拒絕操作與審核紀錄顯示。
+4. 整合 API 錯誤處理，呈現欄位驗證、未登入、權限不足及 RowVersion 衝突等訊息。
+5. 驗收：員工與主管可在瀏覽器完成各自流程，且不可越權。
+
+### 4.1 階段 1 環境與專案骨架（歷史規劃）
 
 1. **先檢查本機安裝狀況**：`.NET 10 SDK`、Git、Node／npm、SQL Server（Developer 或 Express／LocalDB，選一個，優先避免重複安裝）；已有的 Vue／Node 環境可沿用。
 2. 確認資料庫服務可連線，再建立 `backend/PurchaseFlow.Api`、`backend/PurchaseFlow.Tests`、`frontend` 和 Git 儲存庫；不提前開發業務功能。
