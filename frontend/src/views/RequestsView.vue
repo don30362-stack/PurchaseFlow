@@ -205,6 +205,7 @@ async function handleLogout() {
                   <th scope="col">狀態</th>
                   <th scope="col">總金額</th>
                   <th scope="col">建立時間</th>
+                  <th scope="col">操作</th>
                 </tr>
               </thead>
 
@@ -221,6 +222,21 @@ async function handleLogout() {
                   <td>{{ formatMoney(request.totalAmount) }}</td>
 
                   <td>{{ formatDate(request.createdAtUtc) }}</td>
+
+                  <td>
+                    <RouterLink
+                      v-if="request.status === 'Draft'"
+                      :to="{
+                        name: 'request-edit',
+                        params: { id: request.id },
+                      }"
+                      class="edit-link"
+                    >
+                      編輯
+                    </RouterLink>
+
+                    <span v-else>-</span>
+                  </td>
                 </tr>
               </tbody>
             </table>
@@ -373,6 +389,21 @@ button:disabled {
 
 .create-button:focus-visible {
   outline: 2px solid #1d4ed8;
+  outline-offset: 3px;
+}
+
+.edit-link {
+  color: #2563eb;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.edit-link:hover {
+  text-decoration: underline;
+}
+
+.edit-link:focus-visible {
+  outline: 2px solid #2563eb;
   outline-offset: 3px;
 }
 </style>

@@ -1,9 +1,23 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { ApiError } from '@/services/api'
-import { createPurchaseRequest } from '@/services/purchaseRequestService'
+import {
+  createPurchaseRequest,
+  getPurchaseRequest,
+  updatePurchaseRequest,
+} from '@/services/purchaseRequestService'
 
 import type { CreatePurchaseRequestInput, CreatedPurchaseRequest } from '@/types/purchaseRequest'
+
+const route = useRoute()
+
+const isEditMode = computed(() => route.name === 'request-edit')
+
+const requestId = computed(() => {
+  const id = Number(route.params.id)
+  return Number.isSafeInteger(id) && id > 0 ? id : null
+})
 
 const form = reactive<CreatePurchaseRequestInput>({
   title: '',
@@ -11,10 +25,88 @@ const form = reactive<CreatePurchaseRequestInput>({
   items: [],
 })
 
+const rowVersion = ref('')
+const loadingDraft = ref(false)
+const loadError = ref('')
 const saving = ref(false)
 const errorMessage = ref('')
 const validationMessages = ref<string[]>([])
+const successMessage = ref('')
+
 const createdRequest = ref<CreatedPurchaseRequest | null>(null)
+
+let loadSequence = 0
+
+// 編輯模式：取得既有草稿
+async function loadDraft() {
+  const sequence = ++loadSequence
+
+  loadError.value = ''
+  errorMessage.value = ''
+  validationMessages.value = []
+  successMessage.value = ''
+  createdRequest.value = null
+  rowVersion.value = ''
+
+  if (!isEditMode.value) {
+    resetForm()
+    return
+  }
+
+  form.title = ''
+  form.purpose = ''
+  form.items = []
+
+  if (requestId.value === null) {
+    loadError.value = '無效的申請編號。'
+    return
+  }
+
+  loadingDraft.value = true
+
+  try {
+    const detail = await getPurchaseRequest(requestId.value)
+
+    if (sequence !== loadSequence) return
+
+    if (detail.status !== 'Draft') {
+      loadError.value = '只有草稿狀態的申請可以編輯。'
+      return
+    }
+
+    form.title = detail.title
+    form.purpose = detail.purpose ?? ''
+
+    form.items = detail.items.map((item) => ({
+      name: item.name,
+      quantity: item.quantity,
+      estimatedUnitPrice: item.estimatedUnitPrice,
+    }))
+
+    rowVersion.value = detail.rowVersion
+  } catch (error) {
+    if (sequence !== loadSequence) return
+
+    if (error instanceof ApiError && error.status === 404) {
+      loadError.value = '找不到這張申請，或你沒有查看權限。'
+    } else {
+      loadError.value = error instanceof ApiError ? error.message : '無法載入草稿，請稍後再試。'
+    }
+  } finally {
+    if (sequence === loadSequence) {
+      loadingDraft.value = false
+    }
+  }
+}
+
+// 同一個元件可用於新增與編輯路由
+watch(
+  () => [route.name, route.params.id],
+  () => {
+    void loadDraft()
+  },
+  { immediate: true },
+)
 
 function addItem() {
   if (form.items.length >= 20) return
@@ -31,27 +123,50 @@ function removeItem(index: number) {
 }
 
 async function saveDraft() {
-  if (saving.value || createdRequest.value) return
+  if (saving.value || loadingDraft.value || createdRequest.value) {
+    return
+  }
+
+  if (isEditMode.value && (!rowVersion.value || loadError.value)) {
+    return
+  }
 
   saving.value = true
   errorMessage.value = ''
   validationMessages.value = []
+  successMessage.value = ''
+
+  const input: CreatePurchaseRequestInput = {
+    title: form.title.trim(),
+    purpose: form.purpose?.trim() || null,
+    items: form.items.map((item) => ({
+      name: item.name.trim(),
+      quantity: item.quantity,
+      estimatedUnitPrice: item.estimatedUnitPrice,
+    })),
+  }
 
   try {
-    const result = await createPurchaseRequest({
-      title: form.title.trim(),
-      purpose: form.purpose?.trim() || null,
-      items: form.items.map((item) => ({
-        name: item.name.trim(),
-        quantity: item.quantity,
-        estimatedUnitPrice: item.estimatedUnitPrice,
-      })),
-    })
+    if (isEditMode.value) {
+      if (requestId.value === null) return
 
-    createdRequest.value = result
+      const result = await updatePurchaseRequest(requestId.value, {
+        ...input,
+        rowVersion: rowVersion.value,
+      })
+
+      // 每次成功更新後，都要換成後端的新版本
+      rowVersion.value = result.rowVersion
+      successMessage.value = '草稿修改已儲存。'
+    } else {
+      createdRequest.value = await createPurchaseRequest(input)
+    }
   } catch (error) {
     if (error instanceof ApiError) {
-      errorMessage.value = error.message
+      errorMessage.value =
+        error.status === 409
+          ? '草稿已被其他操作修改，請重新載入後再編輯。未儲存的變更可能會遺失。'
+          : error.message
 
       validationMessages.value = Object.values(error.validationErrors).flat()
     } else {
@@ -69,6 +184,7 @@ function resetForm() {
 
   errorMessage.value = ''
   validationMessages.value = []
+  successMessage.value = ''
   createdRequest.value = null
 }
 </script>
@@ -77,11 +193,30 @@ function resetForm() {
   <main class="form-page">
     <div class="form-container">
       <header class="form-header">
-        <h1>新增採購申請</h1>
-        <p>填寫申請資料並儲存為草稿，之後可以繼續編輯。</p>
+        <h1>
+          {{ isEditMode ? '編輯採購草稿' : '新增採購申請' }}
+        </h1>
+
+        <p>
+          {{
+            isEditMode ? '修改申請資料與採購品項。' : '填寫申請資料並儲存為草稿，之後可以繼續編輯。'
+          }}
+        </p>
+
+        <RouterLink :to="{ name: 'requests', query: { view: 'mine' } }"> 返回我的申請 </RouterLink>
       </header>
 
-      <section v-if="createdRequest" class="success-panel" role="status">
+      <p v-if="loadingDraft" role="status">正在載入草稿...</p>
+
+      <div v-else-if="loadError" class="error-panel" role="alert">
+        {{ loadError }}
+      </div>
+
+      <section
+        v-if="!loadingDraft && !loadError && createdRequest"
+        class="success-panel"
+        role="status"
+      >
         <h2>草稿建立成功</h2>
 
         <p>申請編號：{{ createdRequest.id }}</p>
@@ -91,7 +226,11 @@ function resetForm() {
         <button type="button" @click="resetForm">建立另一張草稿</button>
       </section>
 
-      <form v-else @submit.prevent="saveDraft">
+      <form v-else-if="!loadingDraft && !loadError" @submit.prevent="saveDraft">
+        <p v-if="successMessage" class="success-panel" role="status">
+          {{ successMessage }}
+        </p>
+
         <fieldset :disabled="saving">
           <section class="form-section">
             <h2>基本資料</h2>
@@ -203,7 +342,7 @@ function resetForm() {
 
           <div class="form-actions">
             <button type="submit" :disabled="saving">
-              {{ saving ? '儲存中...' : '儲存草稿' }}
+              {{ saving ? '儲存中...' : isEditMode ? '儲存修改' : '儲存草稿' }}
             </button>
           </div>
         </fieldset>

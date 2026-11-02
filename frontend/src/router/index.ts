@@ -33,6 +33,15 @@ const router = createRouter({
         requiresAuth: true,
       },
     },
+    {
+      path: '/requests/:id/edit',
+      name: 'request-edit',
+      component: PurchaseRequestFormView,
+      meta: {
+        requiresAuth: true,
+      },
+    },
+
   ],
 })
 
@@ -71,12 +80,16 @@ router.beforeEach(async (to) => {
     return { name: 'login' }
   }
 
-  // 只有 Employee 可以進入建立草稿頁面
-  if (to.name === 'request-create') {
+  // 只有 Employee 可以進入新增及編輯草稿頁面
+  if (
+    to.name === 'request-create' ||
+    to.name === 'request-edit'
+  ) {
     if (authStore.role !== 'Employee') {
       return { name: 'requests' }
     }
   }
+
 
   if (to.name === 'requests') {
     const view = to.query.view
