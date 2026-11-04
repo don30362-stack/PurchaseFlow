@@ -5,6 +5,7 @@ import { ApiError } from '@/services/api'
 import {
   createPurchaseRequest,
   getPurchaseRequest,
+  submitPurchaseRequest,
   updatePurchaseRequest,
 } from '@/services/purchaseRequestService'
 
@@ -35,6 +36,31 @@ const successMessage = ref('')
 
 const createdRequest = ref<CreatedPurchaseRequest | null>(null)
 
+const submitting = ref(false)
+const submitted = ref(false)
+
+// 記錄最後一次從後端載入或成功儲存的表單內容
+const savedSnapshot = ref('')
+
+function buildInput(): CreatePurchaseRequestInput {
+  return {
+    title: form.title.trim(),
+    purpose: form.purpose?.trim() || null,
+    items: form.items.map((item) => ({
+      name: item.name.trim(),
+      quantity: item.quantity,
+      estimatedUnitPrice: item.estimatedUnitPrice,
+    })),
+  }
+}
+
+// 比對目前表單與最後儲存的內容
+const isDirty = computed(() => {
+  if (!isEditMode.value) return false
+
+  return JSON.stringify(buildInput()) !== savedSnapshot.value
+})
+
 let loadSequence = 0
 
 // 編輯模式：取得既有草稿
@@ -47,6 +73,8 @@ async function loadDraft() {
   successMessage.value = ''
   createdRequest.value = null
   rowVersion.value = ''
+  savedSnapshot.value = ''
+  submitted.value = false
 
   if (!isEditMode.value) {
     resetForm()
@@ -84,6 +112,7 @@ async function loadDraft() {
     }))
 
     rowVersion.value = detail.rowVersion
+    savedSnapshot.value = JSON.stringify(buildInput())
   } catch (error) {
     if (sequence !== loadSequence) return
 
@@ -123,7 +152,13 @@ function removeItem(index: number) {
 }
 
 async function saveDraft() {
-  if (saving.value || loadingDraft.value || createdRequest.value) {
+  if (
+    saving.value ||
+    submitting.value ||
+    submitted.value ||
+    loadingDraft.value ||
+    createdRequest.value
+  ) {
     return
   }
 
@@ -136,15 +171,7 @@ async function saveDraft() {
   validationMessages.value = []
   successMessage.value = ''
 
-  const input: CreatePurchaseRequestInput = {
-    title: form.title.trim(),
-    purpose: form.purpose?.trim() || null,
-    items: form.items.map((item) => ({
-      name: item.name.trim(),
-      quantity: item.quantity,
-      estimatedUnitPrice: item.estimatedUnitPrice,
-    })),
-  }
+  const input = buildInput()
 
   try {
     if (isEditMode.value) {
@@ -157,6 +184,7 @@ async function saveDraft() {
 
       // 每次成功更新後，都要換成後端的新版本
       rowVersion.value = result.rowVersion
+      savedSnapshot.value = JSON.stringify(buildInput())
       successMessage.value = '草稿修改已儲存。'
     } else {
       createdRequest.value = await createPurchaseRequest(input)
@@ -187,6 +215,70 @@ function resetForm() {
   successMessage.value = ''
   createdRequest.value = null
 }
+
+async function submitDraft() {
+  if (
+    !isEditMode.value ||
+    requestId.value === null ||
+    !rowVersion.value ||
+    loadingDraft.value ||
+    saving.value ||
+    submitting.value ||
+    submitted.value ||
+    loadError.value
+  ) {
+    return
+  }
+
+  errorMessage.value = ''
+  validationMessages.value = []
+  successMessage.value = ''
+
+  // 未儲存的修改不能直接送審
+  if (isDirty.value) {
+    errorMessage.value = '有尚未儲存的修改，請先儲存草稿。'
+    return
+  }
+
+  // 草稿可以為空，但送審至少要有一筆品項
+  if (form.items.length === 0) {
+    errorMessage.value = '送出審核前，至少需要一筆採購品項。'
+    return
+  }
+
+  const confirmed = window.confirm('確定要送出審核嗎？送出後將無法再編輯這張申請。')
+
+  if (!confirmed) return
+
+  submitting.value = true
+
+  try {
+    const result = await submitPurchaseRequest(requestId.value, {
+      rowVersion: rowVersion.value,
+    })
+
+    if (result.status !== 'Pending') {
+      errorMessage.value = '後端回傳的狀態不是待審核，請重新載入確認。'
+      return
+    }
+
+    rowVersion.value = result.rowVersion
+    submitted.value = true
+  } catch (error) {
+    if (error instanceof ApiError) {
+      errorMessage.value =
+        error.status === 409
+          ? '送審發生衝突，資料可能已被修改或送審。請重新整理頁面確認最新狀態。'
+          : error.message
+
+      validationMessages.value = Object.values(error.validationErrors).flat()
+    } else {
+      errorMessage.value = '送審失敗，請稍後再試。'
+    }
+  } finally {
+    submitting.value = false
+  }
+}
 </script>
 
 <template>
@@ -212,8 +304,17 @@ function resetForm() {
         {{ loadError }}
       </div>
 
+      <section v-if="submitted" class="success-panel" role="status">
+        <h2>送出審核成功</h2>
+
+        <p>採購申請已送出，目前狀態為「待審核」。</p>
+        <p>送出後不可再修改草稿。</p>
+
+        <RouterLink :to="{ name: 'requests', query: { view: 'mine' } }"> 返回我的申請 </RouterLink>
+      </section>
+
       <section
-        v-if="!loadingDraft && !loadError && createdRequest"
+        v-else-if="!loadingDraft && !loadError && createdRequest"
         class="success-panel"
         role="status"
       >
@@ -231,7 +332,7 @@ function resetForm() {
           {{ successMessage }}
         </p>
 
-        <fieldset :disabled="saving">
+        <fieldset :disabled="saving || submitting">
           <section class="form-section">
             <h2>基本資料</h2>
 
@@ -341,10 +442,28 @@ function resetForm() {
           </div>
 
           <div class="form-actions">
-            <button type="submit" :disabled="saving">
+            <button type="submit" :disabled="saving || submitting">
               {{ saving ? '儲存中...' : isEditMode ? '儲存修改' : '儲存草稿' }}
             </button>
+
+            <button
+              v-if="isEditMode"
+              type="button"
+              class="submit-button"
+              :disabled="saving || submitting || isDirty || form.items.length === 0"
+              @click="submitDraft"
+            >
+              {{ submitting ? '送審中...' : '送出審核' }}
+            </button>
           </div>
+
+          <p v-if="isEditMode && isDirty" class="hint">
+            目前有尚未儲存的修改，請先按「儲存修改」。
+          </p>
+
+          <p v-else-if="isEditMode && form.items.length === 0" class="hint">
+            送出審核前，至少需要一筆採購品項。
+          </p>
         </fieldset>
       </form>
     </div>
@@ -504,5 +623,18 @@ button:disabled {
   .section-heading {
     flex-wrap: wrap;
   }
+}
+
+.form-actions {
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.submit-button {
+  background: #15803d;
+}
+
+.submit-button:hover:not(:disabled) {
+  background: #166534;
 }
 </style>

@@ -6,6 +6,7 @@ import type {
     PurchaseRequestDetail,
     PurchaseRequestListView,
     PurchaseRequestSummary,
+    SubmitPurchaseRequestInput,
     UpdatePurchaseRequestInput,
 } from '@/types/purchaseRequest'
 
@@ -53,3 +54,18 @@ export async function updatePurchaseRequest(
         },
     )
 }
+
+// 將自己的 Draft 送出審核
+export async function submitPurchaseRequest(
+  id: number,
+  input: SubmitPurchaseRequestInput,
+): Promise<PurchaseRequestDetail> {
+  return apiRequest<PurchaseRequestDetail>(
+    `/api/purchase-requests/${id}/submit`,
+    {
+      method: 'POST',
+      body: input,
+    },
+  )
+}
+

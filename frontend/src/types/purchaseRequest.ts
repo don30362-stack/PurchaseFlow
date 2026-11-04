@@ -69,3 +69,7 @@ export interface PurchaseRequestDetail
     items: PurchaseRequestItem[]
     approvalLog: PurchaseRequestApprovalLog | null
 }
+
+export interface SubmitPurchaseRequestInput {
+  rowVersion: string
+}
